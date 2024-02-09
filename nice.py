@@ -31,11 +31,9 @@ class StandardLogisticDistribution:
         return self.m.sample()
 
 
-class NICE(nn.Module):
-
-    def __init__(self, data_dim=28 * 28, hidden_dim=1000):
+class AdditiveCoupling(nn.Module):
+    def __init__(self, data_dim, hidden_dim):
         super().__init__()
-
         self.m = torch.nn.ModuleList([nn.Sequential(
             nn.Linear(data_dim // 2, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
@@ -44,7 +42,7 @@ class NICE(nn.Module):
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, data_dim // 2), ) for i in range(4)])
         self.s = torch.nn.Parameter(torch.randn(data_dim))
-
+    
     def forward(self, x):
         x = x.clone()
         for i in range(len(self.m)):
@@ -59,7 +57,7 @@ class NICE(nn.Module):
         log_jacobian = torch.sum(self.s)
         return z, log_jacobian
 
-    def invert(self, z):
+    def inverse(self, z):
         x = z.clone() / torch.exp(self.s)
         for i in range(len(self.m) - 1, -1, -1):
             h_i1 = x[:, ::2]
@@ -70,6 +68,21 @@ class NICE(nn.Module):
             x[:, ::2] = x_i1 if (i % 2) == 0 else x_i2
             x[:, 1::2] = x_i2 if (i % 2) == 0 else x_i1
         return x
+
+class NICE(nn.Module):
+    def __init__(self, data_dim=28 * 28, hidden_dim=1000, coupling='additive'):
+        super().__init__()
+        self.coupling = coupling
+        if self.coupling == 'additive':
+            self.network = AdditiveCoupling(data_dim, hidden_dim)
+
+    def forward(self, x):
+        z, log_jacobian = self.network(x)
+        return z, log_jacobian
+
+    def invert(self, z):
+        z = self.network.inverse(z)
+        return z
 
 
 def training(normalizing_flow, optimizer, dataloader, distribution, logistic_distribution, nb_epochs=1500, device='cpu'):
