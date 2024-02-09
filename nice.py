@@ -1,16 +1,16 @@
 import torch
 import torch.nn as nn
-import numpy as np
-from torch.utils.data import DataLoader, TensorDataset
-from torchvision.datasets import MNIST
-from torchvision import transforms
 from tqdm import tqdm
+import torchvision.utils
 import matplotlib.pyplot as plt
+from torchvision import transforms
+from torchvision.datasets import MNIST
+from torch.utils.data import DataLoader
 
-from torch.distributions.transformed_distribution import TransformedDistribution
 from torch.distributions.uniform import Uniform
-from torch.distributions.transforms import SigmoidTransform
 from torch.distributions.transforms import AffineTransform
+from torch.distributions.transforms import SigmoidTransform
+from torch.distributions.transformed_distribution import TransformedDistribution
 
 torch.manual_seed(0)
 
@@ -27,21 +27,22 @@ class StandardLogisticDistribution:
     def log_pdf(self, z):
         return self.m.log_prob(z).sum(dim=1)
 
-    def sample(self):
-        return self.m.sample()
+    def sample(self, sample_shape=torch.Size()):
+        return self.m.sample(sample_shape)
 
 
 class AdditiveCoupling(nn.Module):
-    def __init__(self, data_dim, hidden_dim):
+    def __init__(self, data_dim, hidden_dim, hidden_number, coupling_number):
         super().__init__()
-        self.m = torch.nn.ModuleList([nn.Sequential(
-            nn.Linear(data_dim // 2, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, data_dim // 2), ) for i in range(4)])
+        self.m = torch.nn.ModuleList()
+        for _ in range(coupling_number):
+            layers = [nn.Linear(data_dim // 2, hidden_dim), nn.ReLU()]
+            for _ in range(hidden_number):
+                layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.ReLU()])
+            layers.append(nn.Linear(hidden_dim, data_dim // 2))
+            self.m.append(nn.Sequential(*layers))
         self.s = torch.nn.Parameter(torch.randn(data_dim))
+
     
     def forward(self, x):
         x = x.clone()
@@ -70,11 +71,11 @@ class AdditiveCoupling(nn.Module):
         return x
 
 class NICE(nn.Module):
-    def __init__(self, data_dim=28 * 28, hidden_dim=1000, coupling='additive'):
+    def __init__(self, data_dim=28 * 28, hidden_dim=1000, hidden_number = 4, coupling='additive', coupling_number = 4):
         super().__init__()
         self.coupling = coupling
         if self.coupling == 'additive':
-            self.network = AdditiveCoupling(data_dim, hidden_dim)
+            self.network = AdditiveCoupling(data_dim, hidden_dim, hidden_number, coupling_number)
 
     def forward(self, x):
         z, log_jacobian = self.network(x)
@@ -100,18 +101,16 @@ def training(normalizing_flow, optimizer, dataloader, distribution, logistic_dis
             training_loss.append(loss.item())
 
         # Generate and save images after each epoch
-        nb_data = 10
-        fig, axs = plt.subplots(nb_data, nb_data, figsize=(10, 10))
-        for i in range(nb_data):
-            for j in range(nb_data):
-                x = normalizing_flow.invert(logistic_distribution.sample().unsqueeze(0)).data.cpu().numpy()
-                axs[i, j].imshow(x.reshape(28, 28).clip(0, 1), cmap='gray')
-                axs[i, j].set_xticks([])
-                axs[i, j].set_yticks([])
+        normalizing_flow.eval()  # Set to inference mode
+        with torch.no_grad():
+            samples = normalizing_flow.invert(logistic_distribution.sample((100,))).cpu()
+            a, b = samples.min(), samples.max()
+            samples = (samples - a) / (b - a + 1e-10)  # Normalize samples to [0, 1]
+            samples = samples.view(-1, 1, 28, 28)  # Assuming MNIST, reshape to BxCxHxW format
+            torchvision.utils.save_image(torchvision.utils.make_grid(samples, nrow=10),
+                                         f'Imgs/Generated_MNIST_epoch_{epoch}.png')
 
-        # Save the figure
-        plt.savefig(f'Imgs/Generated_MNIST_epoch_{epoch}.png')
-        plt.close(fig)  # Close the figure to free up memory
+        normalizing_flow.train()  # Set back to training mode
 
     return training_loss
 
