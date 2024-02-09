@@ -4,7 +4,7 @@ from tqdm import tqdm
 import torchvision.utils
 import matplotlib.pyplot as plt
 from torchvision import transforms
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, FashionMNIST
 from torch.utils.data import DataLoader
 
 from torch.distributions.uniform import Uniform
@@ -86,19 +86,37 @@ class NICE(nn.Module):
         return z
 
 
-def training(normalizing_flow, optimizer, dataloader, distribution, logistic_distribution, nb_epochs=1500, device='cpu'):
-    training_loss = []
+def training(normalizing_flow, optimizer, train_loader, test_loader, logistic_distribution, nb_epochs=1500, device='cpu'):
     for epoch in tqdm(range(nb_epochs)):
-        for batch_idx, (batch, _) in enumerate(dataloader):
+        normalizing_flow.train()  # Ensure the model is in training mode
+        train_loss = 0.0
+
+        # Training phase
+        for batch_idx, (batch, _) in enumerate(train_loader):
             batch = batch.view(batch.size(0), -1).to(device)  # Flatten and move to the correct device
             z, log_jacobian = normalizing_flow(batch)
             log_likelihood = logistic_distribution.log_pdf(z) + log_jacobian
-            loss = -log_likelihood.sum()  # Calculate mean loss over batch
+            loss = -log_likelihood.sum()  # Aggregate loss
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            training_loss.append(loss.item())
+
+            train_loss += loss.item() / len(train_loader.dataset)
+
+        # Evaluation phase for test loss
+        normalizing_flow.eval()  # Set the model to evaluation mode
+        test_loss = 0.0
+        with torch.no_grad():
+            for batch_idx, (batch, _) in enumerate(test_loader):
+                batch = batch.view(batch.size(0), -1).to(device)
+                z, log_jacobian = normalizing_flow(batch)
+                log_likelihood = logistic_distribution.log_pdf(z) + log_jacobian
+                loss = -log_likelihood.sum()
+
+                test_loss += loss.item() / len(train_loader.dataset)
+
+        print(f'Epoch {epoch+1}: Training Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}')
 
         # Generate and save images after each epoch
         normalizing_flow.eval()  # Set to inference mode
@@ -112,10 +130,20 @@ def training(normalizing_flow, optimizer, dataloader, distribution, logistic_dis
 
         normalizing_flow.train()  # Set back to training mode
 
-    return training_loss
+    return train_loss, test_loss
 
+def load_dataset(dataset_name, transform):
+    if dataset_name == 'MNIST':
+        train_dataset = MNIST(root='./data', train=True, download=True, transform=transform)
+        test_dataset = MNIST(root='./data', train=False, download=True, transform=transform)
+    elif dataset_name == 'FashionMNIST':
+        train_dataset = FashionMNIST(root='./data', train=True, download=True, transform=transform)
+        test_dataset = FashionMNIST(root='./data', train=False, download=True, transform=transform)
+    else:
+        raise ValueError("Unsupported dataset. Choose 'MNIST' or 'FashionMNIST'.")
+    return train_dataset, test_dataset
 
-def main():
+def main(dataset_name='MNIST'):
     device = 'cpu'
     normalizing_flow = NICE().to(device)
     logistic_distribution = StandardLogisticDistribution(device=device)
@@ -126,24 +154,16 @@ def main():
         transforms.Normalize((0.5,), (0.5,))  # Normalize images
     ])
     
-    train_dataset = MNIST(root='./data', train=True, download=True, transform=transform)
+    train_dataset, test_dataset = load_dataset(dataset_name, transform)
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=True)
+
+    test_dataset = torchvision.datasets.MNIST(root='./data/MNIST', train=False, download=True, transform=transform)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=True)
     
     optimizer = torch.optim.Adam(normalizing_flow.parameters(), lr=0.0002, weight_decay=0.9)
     
-    training_loss = training(normalizing_flow, optimizer, train_loader, logistic_distribution, nb_epochs=500,
+    train_loss, test_loss = training(normalizing_flow, optimizer, train_loader, test_loader, nb_epochs=500,
                              device=device, logistic_distribution=logistic_distribution)
-                             
 
-    nb_data = 10
-    fig, axs = plt.subplots(nb_data, nb_data, figsize=(10, 10))
-    for i in range(nb_data):
-        for j in range(nb_data):
-            x = normalizing_flow.invert(logistic_distribution.sample().unsqueeze(0)).data.cpu().numpy()
-            axs[i, j].imshow(x.reshape(28, 28).clip(0, 1), cmap='gray')
-            axs[i, j].set_xticks([])
-            axs[i, j].set_yticks([])
-    plt.savefig('Imgs/Generated_MNIST_data.png')
-    plt.show()
-
-main()
+main(dataset_name='FashionMNIST')
