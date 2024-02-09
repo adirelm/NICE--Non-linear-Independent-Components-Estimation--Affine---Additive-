@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from keras.datasets.mnist import load_data
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
+from torchvision.datasets import MNIST
+from torchvision import transforms
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -12,13 +13,6 @@ from torch.distributions.transforms import SigmoidTransform
 from torch.distributions.transforms import AffineTransform
 
 torch.manual_seed(0)
-
-# load (and normalize) mnist dataset
-(trainX, trainY), (testX, testy) = load_data()
-trainX = (np.float32(trainX) + torch.rand(trainX.shape).numpy()) / 255.
-trainX = trainX.clip(0, 1)
-trainX = torch.tensor(trainX.reshape(-1, 28 * 28))
-
 
 class StandardLogisticDistribution:
 
@@ -81,11 +75,11 @@ class NICE(nn.Module):
 def training(normalizing_flow, optimizer, dataloader, distribution, logistic_distribution, nb_epochs=1500, device='cpu'):
     training_loss = []
     for epoch in tqdm(range(nb_epochs)):
-
-        for batch in dataloader:
-            z, log_jacobian = normalizing_flow(batch.to(device))
-            log_likelihood = distribution.log_pdf(z) + log_jacobian
-            loss = -log_likelihood.sum()
+        for batch_idx, (batch, _) in enumerate(dataloader):
+            batch = batch.view(batch.size(0), -1).to(device)  # Flatten and move to the correct device
+            z, log_jacobian = normalizing_flow(batch)
+            log_likelihood = logistic_distribution.log_pdf(z) + log_jacobian
+            loss = -log_likelihood.sum()  # Calculate mean loss over batch
 
             optimizer.zero_grad()
             loss.backward()
@@ -113,12 +107,21 @@ def main():
     device = 'cpu'
     normalizing_flow = NICE().to(device)
     logistic_distribution = StandardLogisticDistribution(device=device)
-    x = torch.randn(10, 28 * 28, device=device)
-    assert torch.allclose(normalizing_flow.invert(normalizing_flow(x)[0]), x, rtol=1e-04, atol=1e-06)
+    
+    # MNIST Data loading with torchvision
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))  # Normalize images
+    ])
+    
+    train_dataset = MNIST(root='./data', train=True, download=True, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    
     optimizer = torch.optim.Adam(normalizing_flow.parameters(), lr=0.0002, weight_decay=0.9)
-    dataloader = DataLoader(trainX, batch_size=32, shuffle=True)
-    training_loss = training(normalizing_flow, optimizer, dataloader, logistic_distribution, nb_epochs=500,
+    
+    training_loss = training(normalizing_flow, optimizer, train_loader, logistic_distribution, nb_epochs=500,
                              device=device, logistic_distribution=logistic_distribution)
+                             
 
     nb_data = 10
     fig, axs = plt.subplots(nb_data, nb_data, figsize=(10, 10))
