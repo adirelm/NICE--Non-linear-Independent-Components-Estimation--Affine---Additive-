@@ -212,7 +212,6 @@ def main(dataset_name='MNIST', coupling = 'additive', hidden_dim = 1000, number_
 
     normalizing_flow = NICE(
         coupling = coupling,
-        dataset_name = dataset_name,
         hidden_dim = hidden_dim,
         number_of_hidden = number_of_hidden,
         number_of_coupling = number_of_coupling).to(device)
