@@ -209,7 +209,14 @@ def load_dataset(dataset_name, transform):
 
 def main(dataset_name='MNIST', coupling = 'additive', hidden_dim = 1000, number_of_hidden = 4, number_of_coupling = 4):
     device = 'cpu'
-    normalizing_flow = NICE(coupling, dataset_name, hidden_dim, number_of_hidden, number_of_coupling).to(device)
+
+    normalizing_flow = NICE(
+        coupling = coupling,
+        dataset_name = dataset_name,
+        hidden_dim = hidden_dim,
+        number_of_hidden = number_of_hidden,
+        number_of_coupling = number_of_coupling).to(device)
+    
     logistic_distribution = StandardLogisticDistribution(device=device)
     
     # MNIST Data loading with torchvision
